@@ -1,0 +1,425 @@
+---
+title: "Analysis of Plastic Pellets Quality Decline"
+author: "Nafiu Suleiman"
+date: "`r Sys.Date()`"
+output:
+  github_document:
+    toc: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.align = 'center')
+
+library(tidyverse)
+library(ggplot2)
+library(corrplot)
+library(knitr)
+library(factoextra)
+library(ggrepel)
+
+theme_set(theme_minimal())
+```
+
+# Executive Summary
+
+An analysis of 24 plastic pellet batches was conducted to investigate the recent decline in product performance. Six material and thermal measurements were evaluated against batch outcomes (Poor vs Adequate).
+
+The results show **systematic and reproducible differences** between Poor and Adequate batches. Multivariate analysis confirms that the quality decline is driven by **consistent shifts in material/process characteristics**, rather than random variation.
+
+**Key Findings:**
+
+- **29% of batches fail quality standards** (7 Poor, 17 Adequate)
+- **Multiple variables show clear separation** between quality groups
+- **Strong correlations exist** among quality variables, justifying multivariate analysis
+- **PCA achieves 78% variance capture** with just 2 principal components
+- **Excellent group separation** in PCA space indicates systematic quality degradation
+
+---
+
+# Data Overview
+
+```{r load-data}
+data <- read.csv("pellets.csv")  # place pellets.csv in the same folder as this file
+numeric_vars <- c("Size5", "Size10", "Size15", "TGA", "DSC", "TMA")
+
+kable(head(data), caption = "First six batches in the dataset")
+```
+
+**Dataset Description:**
+
+- **24 batches** of plastic pellets
+- **Outcome:** Quality classification (Poor or Adequate)
+- **6 measurements:** Size5, Size10, Size15 (particle size fractions), TGA (thermogravimetric analysis), DSC (differential scanning calorimetry), TMA (thermomechanical analysis)
+
+---
+
+# Exploratory Data Analysis
+
+## Outcome Distribution
+
+```{r outcome, fig.height=6, fig.width=6}
+outcome_counts <- table(data$Outcome)
+
+ggplot(data, aes(x = Outcome, fill = Outcome)) +
+  geom_bar(width = 0.6) +
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.5, size = 5) +
+  labs(title = "Distribution of Batch Outcomes",
+       y = "Count") +
+  scale_fill_manual(values = c("Adequate" = "#2ecc71", "Poor" = "#e74c3c")) +
+  theme(legend.position = "none")
+```
+
+**Interpretation:**
+
+The dataset contains **17 Adequate batches (71%)** and **7 Poor batches (29%)**. This represents a **significant quality problem** with approximately **1 in 4 batches failing** quality standards. This failure rate is substantial enough to warrant immediate investigation and indicates a systematic issue rather than random isolated failures. The sample provides adequate representation of both quality levels for statistical comparison.
+
+---
+
+## Variable Distributions
+
+```{r boxplots, fig.height=6, fig.width=6}
+data_long <- data %>%
+  select(Outcome, all_of(numeric_vars)) %>%
+  pivot_longer(-Outcome)
+
+ggplot(data_long, aes(Outcome, value, fill = Outcome)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_wrap(~name, scales = "free_y", ncol = 3) +
+  labs(title = "Distribution of Quality Variables by Outcome",
+       subtitle = "Boxplots comparing Poor vs Adequate batches across all measurements") +
+  scale_fill_manual(values = c("Adequate" = "#2ecc71", "Poor" = "#e74c3c")) +
+  theme(legend.position = "bottom")
+```
+
+**Interpretation:**
+
+The box plots reveal **distinct patterns** between Poor and Adequate batches:
+
+**Variables showing clear separation:**
+
+- **Size5, Size10, Size15:** Poor batches consistently show **higher values** across all three particle size measurements, indicating a shift toward **larger/coarser particles** in poor-quality material. Size10 shows the clearest separation with minimal overlap between groups.
+
+- **TGA:** Poor batches show **lower TGA values** (centered around 600-650) compared to Adequate batches (650-750), indicating **reduced thermal stability** in poor-quality pellets.
+
+- **TMA:** Poor batches have **lower TMA values** (45-58 range) versus Adequate batches (50-69 range), suggesting **compromised thermal-mechanical properties**.
+
+**Variable showing no separation:**
+
+- **DSC:** The boxes for Poor and Adequate batches **completely overlap**, indicating DSC measurements do **not distinguish quality levels**. This variable provides no discriminating value and could be eliminated from routine testing.
+
+**Key Finding:** Poor quality is characterized by a **dual-mode failure**: (1) oversized particles AND (2) degraded thermal properties, suggesting either a raw material defect or a process issue affecting multiple properties simultaneously.
+
+---
+
+## Correlation Structure 
+
+```{r correlation-eda, fig.height=6, fig.width=8}
+cor_matrix <- cor(data[, numeric_vars])
+corrplot(cor_matrix, method = "color", type = "upper",
+         addCoef.col = "black", number.cex = 0.7,
+         tl.col = "black", tl.srt = 45,
+         col = colorRampPalette(c("#e74c3c", "white", "#3498db"))(200),
+         title = "Correlation Matrix of Quality Variables",
+         mar = c(0,0,2,0))
+```
+
+**Interpretation:**
+
+The correlation matrix reveals **strong relationships** among quality variables, which is critical for understanding the data structure and justifying multivariate analysis:
+
+**Strong Positive Correlations (r > 0.7):**
+
+- **Size5 ↔ Size10** (r = 0.84): These particle size fractions are highly correlated, indicating they measure related aspects of the particle size distribution
+- **Size10 ↔ Size15** (r = 0.82): Coarse particle fractions move together
+- **TGA ↔ TMA** (r = 0.92): Extremely strong correlation suggests these thermal properties are tightly coupled and reflect a common underlying thermal characteristic
+
+**Moderate Correlations (r = 0.4-0.7):**
+
+- **Size5 ↔ Size15** (r = 0.69): Entire particle size distribution tends to shift together
+
+**Weak/No Correlations (r < 0.4):**
+
+- **Particle size variables vs thermal properties:** Weak correlations (r = 0.01 to 0.23) indicate these represent **two relatively independent quality domains**
+- **DSC vs all variables:** Very weak correlations (r = -0.38 to 0.07) further confirm DSC lacks discriminating power
+
+**Why This Matters:**
+
+1. **High correlations indicate redundancy** - The 6 measurements contain overlapping information
+2. **Two distinct domains identified:** Particle size domain (Size5/10/15) and thermal property domain (TGA/TMA)
+3. **Justifies dimensionality reduction** - Since variables are correlated, they can be represented with fewer principal components without significant information loss
+4. **PCA suitability confirmed** - PCA works best when variables ARE correlated (if all r ≈ 0, PCA wouldn't help)
+
+This correlation structure motivates the use of **Principal Component Analysis** to simplify the data while retaining the essential quality information.
+
+---
+
+# Principal Component Analysis
+
+## Rationale for Using PCA
+
+**Why Principal Component Analysis?**
+
+Based on the exploratory analysis, I have identified several conditions that make PCA an ideal approach:
+
+**1. High Dimensionality with Redundancy**
+
+I am tracking **6 correlated variables** to assess quality. The correlation matrix shows:
+- Strong correlations between Size5/10/15 (r = 0.69-0.84)
+- Very strong correlation between TGA and TMA (r = 0.92)
+
+This redundancy means I am essentially measuring **fewer than 6 independent quality aspects**. PCA will extract these underlying dimensions.
+
+**2. Need for Simplified Monitoring**
+
+Tracking 6 variables simultaneously for quality control is:
+- **Complex** for operators to monitor
+- **Difficult** to visualize (cannot plot 6 dimensions)
+- **Inefficient** when variables contain overlapping information
+
+PCA will reduce this to **2-3 composite indices** that capture most quality variation.
+
+**3. Multivariate Pattern Detection**
+
+Individual variable analysis may miss patterns that emerge when considering **all variables together**. PCA will:
+- Identify the **main directions of variation** in the data
+- Reveal whether Poor and Adequate batches separate in a **reduced dimensional space**
+- Show which **combinations of variables** best distinguish quality
+
+**4. Objectives of PCA in This Analysis:**
+
+- **Dimensionality Reduction:** Transform 6 correlated variables → 2-3 uncorrelated principal components
+- **Visualization:** Plot quality differences in 2D space (PC1 vs PC2)
+- **Variable Importance:** Identify which measurements contribute most to quality variation
+- **Quality Indices:** Create composite scores (PC1, PC2) for simplified monitoring
+- **Group Separation:** Test if Poor and Adequate batches form distinct clusters
+
+**Expected Outcome:** If PCA successfully separates the quality groups with high variance explained (>70% in first 2 PCs), it confirms that quality degradation is **systematic and multidimensional**, providing strong evidence for either a supplier material issue or process drift affecting multiple properties.
+
+---
+
+```{r pca}
+pca <- prcomp(data[, numeric_vars], scale. = TRUE)
+pca_scores <- as.data.frame(pca$x)
+pca_scores$Outcome <- data$Outcome
+pca_scores$Lot_number <- data$Lot_number
+```
+
+## PCA Score Plot
+
+```{r pca-plot, fig.height=6, fig.width=6}
+ggplot(pca_scores, aes(PC1, PC2, color = Outcome)) +
+  geom_point(size = 3, alpha = 0.8) +
+  stat_ellipse(level = 0.95, size = 1.2) +
+  geom_text_repel(aes(label = Lot_number), size = 2, max.overlaps = 15) +
+  labs(title = "PCA Score Plot: Quality Group Separation",
+       subtitle = "95% confidence ellipses show distinct clustering",
+       x = "PC1 (44.5% variance)",
+       y = "PC2 (34.0% variance)") +
+  scale_color_manual(values = c("Adequate" = "#2ecc71", "Poor" = "#e74c3c")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+**Interpretation:**
+
+The PCA score plot demonstrates **excellent separation** between quality groups:
+
+**Group Positioning:**
+
+- **Poor batches (red)** cluster in the **bottom-left quadrant** (negative PC1 and PC2 scores)
+- **Adequate batches (green)** cluster in the **top-right quadrant** (positive PC1 and PC2 scores)
+- The **95% confidence ellipses barely overlap**, indicating statistically distinct populations
+
+**What This Reveals:**
+
+1. **Systematic Quality Degradation:** Poor batches form a **coherent cluster** rather than being randomly scattered, proving quality decline is not due to random batch-to-batch variation but represents a **consistent shift** in material/process characteristics.
+
+2. **Both Principal Components Matter:** Separation occurs along **both PC1 (x-axis) and PC2 (y-axis)**, suggesting quality is affected by **two independent factors** (later revealed as particle size and thermal properties).
+
+3. **Batch Traceability:** Poor batch lot numbers (B914, B404, B694, B875, B517, B430, B745) are labeled. The next critical step is to check if these batches cluster by:
+   - **Supplier/delivery date** → Suggests supplier material problem
+   - **Production line/date** → Suggests process/equipment problem
+
+4. **Predictive Capability:** The clear separation means I could use PC scores as a **quality classification tool** - new batches with negative PC1 and PC2 scores would be flagged as high-risk for poor quality.
+
+**Conclusion:** PCA successfully reduces 6 variables to 2 dimensions while **preserving the quality distinction**, confirming that the underlying quality problem has a **systematic, multi-variable signature**.
+
+---
+
+## Scree Plot (PCA)
+
+```{r scree, fig.height=5, fig.width=7}
+fviz_eig(pca, addlabels = TRUE, ylim = c(0, 80)) +
+  labs(title = "Scree Plot: Variance Explained by Principal Components",
+       x = "Principal Component",
+       y = "Percentage of Explained Variance (%)")
+```
+
+**Interpretation:**
+
+The scree plot shows how much information each principal component captures:
+
+**Variance Breakdown:**
+
+- **PC1:** 44.5% of total variance - Nearly **half** of all quality variation
+- **PC2:** 34.0% of variance - Second major dimension
+- **PC1 + PC2 together:** **78.5% cumulative variance** - Excellent for 2D representation
+- **PC3:** 14% - Adds detail but less critical
+- **PC4-PC6:** <5% each - Mostly noise
+
+**What This Means:**
+
+1. **Excellent Dimensionality Reduction:** We've reduced from **6 variables to 2 principal components** while retaining **78.5% of information**. This is a very successful reduction (>70% is considered good).
+
+2. **"Elbow" at PC2:** The sharp drop after PC2 indicates the first two components capture the **essential quality variation**, while remaining components represent minor variations or measurement noise.
+
+3. **Justification for 2D Visualization:** Since PC1 and PC2 together explain nearly 80% of variance, the 2D score plot (previous figure) is a **valid and comprehensive representation** of the quality differences.
+
+4. **Simplified Monitoring:** Instead of tracking 6 variables, operators could monitor just **PC1 and PC2 scores**, losing only ~22% of information - a worthwhile trade-off for simplicity.
+
+**Decision:** I should focus interpretation on **PC1 and PC2** as they contain the vast majority of quality-relevant information. PC3 could be examined if additional detail is needed, but PC4-PC6 can be safely ignored.
+
+---
+
+## PCA Loadings Plot (PCA)
+
+```{r loadings-plot, fig.height=5, fig.width=7}
+fviz_pca_var(pca,
+             col.var = "contrib",
+             gradient.cols = c("#3498db", "white", "#e74c3c"),
+             repel = TRUE) +
+  labs(title = "PCA Loadings Plot: Variable Contributions to PC1 and PC2",
+       subtitle = "Arrow length and color indicate variable importance") +
+  theme_minimal()
+```
+
+**Interpretation:**
+
+The loadings plot reveals **which original variables contribute to each principal component** and helps us understand what PC1 and PC2 represent:
+
+**PC1 (Horizontal Axis - 44.5% variance):**
+
+- **Size15, Size10, Size5** all point **strongly to the left** (negative direction)
+- These three variables have similar arrow lengths and directions, indicating they **load together** on PC1
+- **Interpretation:** PC1 is primarily a **"Particle Size Index"**
+  - **Negative PC1 scores** (left side) = Larger particles = **Poor quality batches**
+  - **Positive PC1 scores** (right side) = Smaller particles = **Adequate batches**
+
+**PC2 (Vertical Axis - 34.0% variance):**
+
+- **TGA and TMA** point **strongly upward** (positive direction)
+- These variables are closely aligned, reflecting their high correlation (r = 0.92)
+- **Interpretation:** PC2 is primarily a **"Thermal Stability Index"**
+  - **Negative PC2 scores** (bottom) = Lower thermal properties = **Poor quality**
+  - **Positive PC2 scores** (top) = Higher thermal stability = **Adequate quality**
+
+**DSC:**
+
+- **Short arrow** pointing downward
+- Weak contribution to both PCs
+- Confirms our earlier finding that **DSC does not discriminate quality**
+
+**Color Coding (Contribution):**
+
+- **Red arrows** (Size variables, TGA, TMA): High contribution to the PCs - these are the **key quality drivers**
+- **Blue/white arrows** (DSC): Low contribution - minimal importance
+
+**Integration with Score Plot:**
+
+Combining this with the score plot interpretation:
+
+- **Poor batches** (bottom-left in score plot) have:
+  - **Negative PC1** → High Size5/10/15 → **Oversized particles**
+  - **Negative PC2** → Low TGA/TMA → **Poor thermal properties**
+
+- **Adequate batches** (top-right in score plot) have:
+  - **Positive PC1** → Low Size5/10/15 → **Fine particles**
+  - **Positive PC2** → High TGA/TMA → **Good thermal properties**
+
+**Root Cause Implication:**
+
+The fact that poor quality shows **simultaneous failure** in both dimensions (particle size AND thermal properties) suggests:
+- **Either:** Raw material defect affecting both characteristics
+- **Or:** Process problem (e.g., inadequate processing) degrading multiple properties
+- **Not:** Independent random failures in individual variables
+
+**Practical Use:**
+
+- **Focus quality control** on the 5 variables with strong loadings: Size5/10/15, TGA, TMA
+- **Eliminate DSC** from routine testing (saves time/cost, no quality information)
+- **Monitor PC1 and PC2 scores** as composite quality indices
+
+---
+
+# Interpretation
+
+## Overall Assessment
+
+Poor batches form a **coherent cluster** in PCA space and are associated with **systematic shifts** across multiple correlated variables. This pattern provides strong evidence that the quality decline is driven by **material or process changes**, rather than isolated batch failures or random variation.
+
+**Key Evidence:**
+
+1. **Multivariate Separation:** Poor and Adequate batches separate clearly in 2D PCA space with minimal overlap (95% confidence ellipses barely touch)
+
+2. **Dual-Mode Failure Pattern:** 
+   - **PC1 (Particle Size):** Poor batches have consistently larger particles across all three size fractions
+   - **PC2 (Thermal Properties):** Poor batches have reduced thermal stability (lower TGA/TMA)
+
+3. **Systematic, Not Random:** The tight clustering of Poor batches (rather than random scatter) indicates a **consistent underlying cause** affecting multiple properties simultaneously
+
+4. **High Variance Capture:** 78.5% of quality variation explained by just 2 principal components confirms that quality differences are **low-dimensional and well-defined**, not complex multi-factorial noise
+
+**Implications for Root Cause:**
+
+The **"locked together"** failure pattern (particle size AND thermal properties degrading together) is more consistent with:
+
+**Favors Supplier Problem:**
+- Raw material arriving with inherent defects (oversized + thermally unstable)
+- One supplier's manufacturing issue affecting multiple properties
+- Batch-level quality issues
+
+**Less Consistent with Process Problem:**
+- Process drift typically affects one parameter at a time
+- Would expect to see gradual changes, not tight clustering
+- Exception: Catastrophic equipment failure could cause multi-variable impact
+
+**Critical Next Step:** Trace Poor batch lot numbers (B914, B404, B694, B875, B517, B430, B745) to supplier sources and production dates to definitively determine root cause.
+
+---
+
+# Conclusions
+
+1. **Quality degradation is systematic and reproducible**, affecting 29% of batches (7 out of 24 classified as Poor).
+
+2. **Multiple variables consistently differ between Poor and Adequate batches**, specifically:
+   - Particle size variables (Size5/10/15): All elevated in Poor batches
+   - Thermal properties (TGA, TMA): Both reduced in Poor batches
+   - DSC: No difference (can be eliminated from testing)
+
+3. **PCA confirms strong multivariate separation** with:
+   - 78.5% variance explained by 2 principal components
+   - Clear group separation in PC space (ellipses barely overlap)
+   - Two quality dimensions identified: Particle Size (PC1) and Thermal Stability (PC2)
+
+4. **The issue is unlikely to be caused by random variation**. Evidence includes:
+   - Coherent clustering of Poor batches
+   - Simultaneous degradation across correlated variables
+   - Consistent failure pattern (not scattered outliers)
+
+5. **Root cause evidence slightly favors supplier material problem** due to multi-variable "locked together" failure pattern, but process issues cannot be ruled out without traceability analysis.
+
+---
+
+# Recommendations
+
+Based on the analysis, I recommend implementing enhanced quality monitoring by tracking five critical variables for every batch: Size5, Size10, Size15, TGA, and TMA. DSC testing should be discontinued as it provides no discriminating value between quality levels, which will result in resource savings. Control limits should be established based on the analysis findings, specifically setting Size10 below 8.5 and TGA above 650 to flag batches approaching Poor quality ranges. A critical next step involves conducting lot traceability analysis by cross-referencing the seven Poor batch lot numbers (B914, B404, B694, B875, B517, B430, B745) with supplier sources and delivery dates, as well as production line information, operators, and process parameters such as temperature and milling time. This traceability analysis will definitively determine whether Poor batches cluster by supplier, indicating a raw material problem, or by production conditions, pointing to a process or equipment issue.
+
+I further recommend implementing PCA-based monitoring as a simplified quality control approach. PC1 and PC2 scores should be calculated for each new batch and plotted in real-time on a monitoring dashboard. Quality zones can be defined where batches with both PC1 and PC2 scores positive are classified as Adequate, batches with scores between -1 and 0 trigger warnings for investigation, and batches with scores below -1 are classified as Poor and rejected. This two-dimensional monitoring system reduces complexity compared to tracking six separate variables while retaining 78.5% of quality information. Based on the outcome of the traceability analysis, targeted corrective actions should follow. If supplier clustering is identified, corrective action requests should be issued to the supplier, 100% incoming inspection should be implemented temporarily, and alternative suppliers should be evaluated. If process clustering is found, equipment maintenance and calibration should be prioritized, process parameters should be optimized, and additional operator training should be conducted.
+
+For sustained quality improvement, I recommend establishing a continuous monitoring program that tracks key performance indicators including the Poor batch rate and mean PC1 and PC2 scores. The target should be to reduce the Poor batch rate from the current 29% to below 10%. The PCA model should be revalidated periodically with accumulated new data to ensure the principal component structure remains stable over time. Control limits should be tightened on variables with strong PCA contributions, particularly the particle size variables and thermal properties. Statistical Process Control charts should be developed using PC scores as composite quality indices, which will provide early warning of quality drift before batches fail final specifications. Finally, a predictive quality model should be developed using PC scores to enable proactive identification of at-risk batches, allowing intervention before poor-quality material is produced. This comprehensive approach addresses both immediate quality issues and establishes a robust long-term quality assurance system based on the multivariate nature of the quality problem identified through this analysis.
+
+---
+
+**End of Report**
